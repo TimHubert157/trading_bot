@@ -1,14 +1,16 @@
-import json
-import time
-import config
-import threading
-from threading import Lock
-import sqlite3
-import datetime
-from binance import Client
-import websockets
 import asyncio
+import datetime
+import json
+import sqlite3
+import threading
+import time
+from threading import Lock
+
 import pandas as pd
+import websockets
+from binance import Client
+
+import config
 
 con = sqlite3.connect("klines.db")
 cur = con.cursor()
@@ -20,6 +22,7 @@ class technical_indicator:
         self.pair = pair
         self.con = sqlite3.connect("klines.db")
         self.klines = pd.read_sql_query("SELECT closing FROM {pair}".format(pair = pair), self.con)
+        self.price = self.klines.iloc[-1]
 
     def ema(self, rate):
         ema = self.klines.ewm(span=rate, adjust=False).mean()
@@ -29,11 +32,13 @@ class technical_indicator:
         self.klines = pd.read_sql_query("SELECT closing FROM {pair}".format(pair = self.pair), self.con)
         while self.klines.isnull().values.any() == True:
             self.klines = pd.read_sql_query("SELECT closing FROM {pair}".format(pair = self.pair), self.con)
+            self.price = self.klines.iloc[-1]
             time.sleep(1)
         
 class trading_bot:
     def __init__(self, pair):
         self.pair = pair
+        self.startOutsideBull = config.startOutsideBull
         self.bought = False
         self.bought_add = 0
         self.time_out = 0
@@ -44,9 +49,23 @@ class trading_bot:
         self.thread.start()
 
     def strategy(self):
-        indicators = technical_indicator(self.pair)
+        self.indicators = technical_indicator(self.pair)
         while True:
-            indicators.update()
+
+            #start the strategy on long
+            if self.startOutsideBull == True and self.bought == False:
+                if self.indicators.ema(5).iloc[-1] < self.indicators.ema(13).iloc[-1]:
+                    self.startOutsideBull = False
+
+            if self.startOutsideBull == False:
+                if self.indicators.ema(5).iloc[-1] > self.indicators.ema(13).iloc[-1]:
+                    self.delayed_buy(20)
+
+            if self.bought == True:
+                self.take_profit()
+                self.stop_loss()
+
+            self.indicators.update()
             time.sleep(1)
 
     def get_percentage(self, f_value, s_value):
@@ -56,18 +75,39 @@ class trading_bot:
 
     def take_profit(self):
         if self.bought_add != 0:
-                if self.get_percentage(float(self.klines['closing'].iloc[-1]), float(self.bought_add)) >= config.take_profit:
+                if self.get_percentage(float(self.indicators.price.iloc[-1]), float(self.bought_add)) >= config.take_profit:
                     self.bought = False
-                    self.cur.execute("INSERT INTO profits (symbol, profit) VALUES (?, ?)", (self.pair, self.get_percentage(float(self.klines['closing'].iloc[-1]), self.bought_add)))
-                    self.con.commit()
+                    #self.cur.execute("INSERT INTO profits (symbol, profit) VALUES (?, ?)", (self.pair, self.get_percentage(float(self.indicators.price.iloc[-1]), self.bought_add)))
+                    #self.con.commit()
                     self.bought_add = 0
+                    print(f"Sold with Profit: {self.pair} @{self.bought_add}")
+
+    def delayed_buy(self, delay):
+        time.sleep(delay)
+        self.indicators.update()
+        if self.indicators.ema(5).iloc[-1] > self.indicators.ema(13).iloc[-1] and self.indicators.price.iloc[-1] > self.indicators.ema(13).iloc[-1]:
+            self.bought_add = self.indicators.price.iloc[-1]
+            self.bought = True
+            self.startOutsideBull = True
+            threadLock.acquire()
+            print(f"Bought {self.pair} @{self.bought_add}")
+            threadLock.release()
+
+    def buy(self):
+        self.bought_add = self.indicators.price.iloc[-1]
+        self.bought = True
+        self.startOutsideBull = True
+        threadLock.acquire()
+        print(f"Bought {self.pair} @{self.bought_add}")
+        threadLock.release()
 
     def stop_loss(self):
         if self.bought_add != 0:
-                if self.get_percentage(float(self.klines['closing'].iloc[-1]), float(self.bought_add)) >= -1 * (config.stop_loss):
+                if self.get_percentage(float(self.klines['closing'].iloc[-1]), float(self.bought_add)) <= -1 * config.stop_loss:
                     self.bought = False
-                    self.cur.execute("INSERT INTO profits (symbol, profit) VALUES (?, ?)", (self.pair, self.get_percentage(float(self.klines['closing'].iloc[-1]), self.bought_add)))
-                    self.con.commit()
+                    #self.cur.execute("INSERT INTO profits (symbol, profit) VALUES (?, ?)", (self.pair, self.get_percentage(self.indicators.price.iloc[-1], self.bought_add)))
+                    #self.con.commit()
+                    print(f"Sold with Loss: {self.pair} @{self.bought_add}")
                     self.bought_add = 0
 
     def logger(self):
@@ -123,6 +163,8 @@ if __name__ == "__main__":
         sql_reorganization(pair)
         pair_list.append(f"{pair.lower()}@kline_{config.kline_interval}")
         bots.append(trading_bot(pair))
+
+    print(f"Trading Bot by Huberto | {config.pairs}")
 
     asyncio.run(main(pair_list))
 
