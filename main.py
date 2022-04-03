@@ -79,8 +79,8 @@ class trading_bot:
                     self.bought = False
                     #self.cur.execute("INSERT INTO profits (symbol, profit) VALUES (?, ?)", (self.pair, self.get_percentage(float(self.indicators.price.iloc[-1]), self.bought_add)))
                     #self.con.commit()
+                    print(f"[{datetime.datetime.now().time()}] Sold with Profit: {self.pair} @{self.indicators.price.iloc[-1]}")
                     self.bought_add = 0
-                    print(f"Sold with Profit: {self.pair} @{self.bought_add}")
 
     def delayed_buy(self, delay):
         time.sleep(delay)
@@ -89,9 +89,8 @@ class trading_bot:
             self.bought_add = self.indicators.price.iloc[-1]
             self.bought = True
             self.startOutsideBull = True
-            threadLock.acquire()
-            print(f"Bought {self.pair} @{self.bought_add}")
-            threadLock.release()
+            print(f"[{datetime.datetime.now().time()}] Bought {self.pair} @{self.bought_add}")
+            
 
     def buy(self):
         self.bought_add = self.indicators.price.iloc[-1]
@@ -103,11 +102,11 @@ class trading_bot:
 
     def stop_loss(self):
         if self.bought_add != 0:
-                if self.get_percentage(float(self.klines['closing'].iloc[-1]), float(self.bought_add)) <= -1 * config.stop_loss:
+                if self.get_percentage(float(self.indicators.price.iloc[-1]), float(self.bought_add)) <= -1 * config.stop_loss:
                     self.bought = False
                     #self.cur.execute("INSERT INTO profits (symbol, profit) VALUES (?, ?)", (self.pair, self.get_percentage(self.indicators.price.iloc[-1], self.bought_add)))
                     #self.con.commit()
-                    print(f"Sold with Loss: {self.pair} @{self.bought_add}")
+                    print(f"[{datetime.datetime.now().time()}] Sold with Loss: {self.pair} @{self.indicators.price.iloc[-1]}")
                     self.bought_add = 0
 
     def logger(self):
