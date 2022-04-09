@@ -17,21 +17,43 @@ cur = con.cursor()
 client = Client(config.api_key, config.api_secret_key)
 threadLock = threading.Lock()
 
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
 class technical_indicator:
     def __init__(self, pair):
         self.pair = pair
         self.con = sqlite3.connect("klines.db")
-        self.klines = pd.read_sql_query("SELECT closing FROM {pair}".format(pair = pair), self.con)
+        self.klines = self.klines = pd.read_sql_query("select closing from (select id, closing from {pair} order by id desc limit {limit}) order by id asc".format(pair = self.pair, limit = config.kline_limit), self.con)
         self.price = self.klines.iloc[-1]
 
     def ema(self, rate):
         ema = self.klines.ewm(span=rate, adjust=False).mean()
         return ema.iloc[-1]
 
+    def rsi(self, rate = 14):
+        ClosingPriceDeltas = self.klines.diff()
+        up = ClosingPriceDeltas.clip(lower=0)
+        down = -1 * ClosingPriceDeltas.clip(upper=0)
+        previusAverageGain = up.ewm(com = rate - 1, min_periods = rate).mean()
+        previusAverageLoss= down.ewm(com = rate - 1, min_periods = rate).mean()
+        rsi = previusAverageGain / previusAverageLoss
+        rsi = 100 - (100/(1 + rsi))
+        return rsi
+
     def update(self):
-        self.klines = pd.read_sql_query("SELECT closing FROM {pair}".format(pair = self.pair), self.con)
+        self.klines = pd.read_sql_query("select closing from (select id, closing from {pair} order by id desc limit {limit}) order by id asc".format(pair = self.pair, limit = config.kline_limit), self.con)
+        self.price = self.klines.iloc[-1]
         while self.klines.isnull().values.any() == True:
-            self.klines = pd.read_sql_query("SELECT closing FROM {pair}".format(pair = self.pair), self.con)
+            self.klines = pd.read_sql_query("select closing from (select id, closing from {pair} order by id desc limit {limit}) order by id asc".format(pair = self.pair, limit = config.kline_limit), self.con)
             self.price = self.klines.iloc[-1]
             time.sleep(1)
         
@@ -51,7 +73,6 @@ class trading_bot:
     def strategy(self):
         self.indicators = technical_indicator(self.pair)
         while True:
-
             #start the strategy on long
             if self.startOutsideBull == True and self.bought == False:
                 if self.indicators.ema(5).iloc[-1] < self.indicators.ema(13).iloc[-1]:
@@ -134,7 +155,7 @@ def sql_reorganization(symbol):
     cur.execute("DROP TABLE IF EXISTS {symbol}".format(symbol = symbol))
     cur.execute("CREATE TABLE {symbol} (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol REAL, otime TEXT, ctime TEXT, opening REAL, closing REAL, high REAL, low REAL)".format(symbol = symbol))
 
-    for kline in client.get_historical_klines(symbol, Client.KLINE_INTERVAL_1MINUTE, "4 hour ago UTC"):
+    for kline in client.get_historical_klines(symbol, Client.KLINE_INTERVAL_1MINUTE, "3 hour ago UTC"):
         cur.execute("INSERT INTO {symbol} (symbol, otime, ctime, opening, closing, high, low) VALUES (?, ?, ?, ?, ?, ?, ?)".format(symbol = symbol), (symbol, kline[0], kline[6], float(kline[1]), float(kline[4]), float(kline[2]), float(kline[3])))
         con.commit()
 
@@ -145,6 +166,7 @@ def sql_update(res, symbol):
         newKline = int(new.timestamp() * 1000)
         cur.execute("UPDATE {symbol} set symbol = ?, otime = ?, ctime = ?, opening = ?, closing = ?, high = ?, low = ? WHERE otime = ?".format(symbol = symbol), (symbol, res['t'], res['T'], res['o'], res['c'], res['h'], res['l'], res['t']))
         cur.execute("INSERT INTO {symbol} (symbol, otime) VALUES (?, ?)".format(symbol = symbol), (symbol, int(newKline)))
+        cur.execute("DELETE FROM {symbol} WHERE id = 1".format(symbol = symbol))
         con.commit()
     else:
         cur.execute("UPDATE {symbol} set symbol = ?, otime = ?, ctime = ?, opening = ?, closing = ?, high = ?, low = ? WHERE otime = ?".format(symbol = symbol), (symbol, res['t'], res['T'], res['o'], res['c'], res['h'], res['l'], res['t']))
@@ -158,12 +180,12 @@ if __name__ == "__main__":
     cur.execute("DROP TABLE IF EXISTS profits")
     con.commit()
 
+    print(f"{bcolors.HEADER}Trading Bot by Huberto | {config.pairs}{bcolors.ENDC}")
+
     for pair in config.pairs:
         sql_reorganization(pair)
         pair_list.append(f"{pair.lower()}@kline_{config.kline_interval}")
         bots.append(trading_bot(pair))
-
-    print(f"Trading Bot by Huberto | {config.pairs}")
 
     asyncio.run(main(pair_list))
 

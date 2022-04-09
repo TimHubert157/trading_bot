@@ -1,8 +1,9 @@
-pairs = ["BTCUSDT", "BNBUSDT"] #coins to trade
+pairs = ["BTCUSDT"] #coins to trade
 kline_interval = "1m" #kline interval to trade
 api_key = ''
 api_secret_key = ''
 take_profit = 0.1
 stop_loss = 0.1
+kline_limit = 200 #how many klines are used for calculations
 startOutsideBull = True
 loop_time = 1 #loop time in seconds
